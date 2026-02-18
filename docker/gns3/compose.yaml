@@ -1,0 +1,44 @@
+services:
+  gns3-server:
+    build:
+      context: .
+      dockerfile: Dockerfile
+
+    container_name: gns3server
+    hostname: gns3server
+
+    environment:
+      - TZ=Europe/Helsinki
+      - PUID=1000
+      - PGID=1000
+
+    devices:
+      - /dev/kvm:/dev/kvm
+      - /dev/net/tun:/dev/net/tun
+    sysctls:
+      net.ipv4.ip_forward: "1"
+
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
+
+    volumes:
+      - ./conf:/server/conf
+      - ./GNS3:/root/GNS3
+      - ./share:/server/.local/share
+      # Alla olevat tiedostot ovat samassa kansiossa kuin tämä tiedosto.
+      - ./init-tap-dhcp2.sh:/usr/local/bin/init-tap-dhcp2.sh:ro
+      - ./init-tap-virbr0.sh:/usr/local/bin/init-tap-virbr0.sh:ro
+      - ./start-gns3.sh:/usr/local/bin/start-gns3.sh:ro
+
+    networks:
+      - labnet
+
+    # Luo tap0 ja jaa netti sen kautta gns3:lle ja käynnistä gns3
+    entrypoint: ["/usr/local/bin/start-gns3.sh"]
+    restart: unless-stopped
+
+networks:
+  labnet:
+    external: true
+

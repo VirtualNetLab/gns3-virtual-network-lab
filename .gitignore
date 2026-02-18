@@ -2,33 +2,21 @@
 # WireGuard secrets and configs
 ########################################
 
-**/wireguard/config/
-**/wireguard/wg-config/
-**/wireguard/wg_confs/
-# Any wg-config directories anywhere
+# WireGuard stack runtime data (NEVER commit)
+docker/wireguard-stack/wg-config/
+docker/wireguard-stack/wgdashboard-data/
+docker/wireguard-stack/portainer-data/
+
+# Safety nets (in case paths change)
 **/wg-config/
 **/wg_confs/
+**/wgdashboard-data/
+**/portainer-data/
 
 **/privatekey*
 **/publickey*
 **/presharedkey*
-
 **/wg0.conf
-**/*.conf
-
-########################################
-# WGDashboard data
-########################################
-
-**/wgdashboard/data/
-**/wgdashboard/db/
-**/wgdashboard/*.db
-
-########################################
-# Portainer data
-########################################
-
-**/portainer/data/
 
 ########################################
 # Environment files

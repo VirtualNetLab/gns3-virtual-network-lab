@@ -1,0 +1,63 @@
+services:
+  wireguard:
+    image: lscr.io/linuxserver/wireguard:latest
+    container_name: wireguard
+    cap_add:
+      - NET_ADMIN
+      - SYS_MODULE
+    environment:
+      - PUID=1000
+      - PGID=1000
+      - TZ=Europe/Helsinki
+      - SERVERURL=snotflinger.ddns.net
+      - SERVERPORT=51820
+      - PEERS=jarno
+      - PEERDNS=1.1.1.1
+      - ALLOWEDIPS=172.30.0.0/24
+    volumes:
+      - ./wg-config:/config
+      - /lib/modules:/lib/modules:ro
+    sysctls:
+      - net.ipv4.ip_forward=1
+      - net.ipv4.conf.all.src_valid_mark=1
+    ports:
+      - "51821:51820/udp"
+      - "10086:10086/tcp"
+    networks:
+      labnet:
+        ipv4_address: 172.30.0.2
+    restart: unless-stopped
+
+
+  wgdashboard:
+    image: ghcr.io/wgdashboard/wgdashboard:latest
+    container_name: wgdashboard
+    restart: unless-stopped
+    depends_on:
+      - wireguard
+    network_mode: "service:wireguard"
+    cap_add:
+      - NET_ADMIN
+    volumes:
+      - ./wg-config/wg_confs:/etc/wireguard
+      - ./wgdashboard-data:/data
+
+
+  portainer:
+    image: portainer/portainer-ce:latest
+    container_name: portainer
+    restart: unless-stopped
+
+    # NO ports exposed — only accessible via WireGuard network
+    networks:
+      labnet:
+        ipv4_address: 172.30.0.3
+
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ./portainer-data:/data
+
+
+networks:
+  labnet:
+    external: true
