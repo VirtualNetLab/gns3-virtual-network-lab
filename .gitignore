@@ -1,66 +1,59 @@
 ########################################
-# Secrets and private keys
+# WireGuard secrets and configs
 ########################################
 
-*.key
-*.pem
-*.crt
-*.csr
-*.p12
-*.pfx
+**/wireguard/config/
+**/wireguard/wg-config/
+**/wireguard/wg_confs/
+# Any wg-config directories anywhere
+**/wg-config/
+**/wg_confs/
 
-privatekey*
-publickey*
-presharedkey*
+**/privatekey*
+**/publickey*
+**/presharedkey*
 
-wg0.conf
-wg*.conf
-
-########################################
-# WireGuard configs and runtime files
-########################################
-
-wg-config/
-wireguard/config/
-wireguard/wg-config/
+**/wg0.conf
+**/*.conf
 
 ########################################
-# Environment variables
+# WGDashboard data
+########################################
+
+**/wgdashboard/data/
+**/wgdashboard/db/
+**/wgdashboard/*.db
+
+########################################
+# Portainer data
+########################################
+
+**/portainer/data/
+
+########################################
+# Environment files
 ########################################
 
 .env
 .env.*
-*.env
+**/.env
 
 ########################################
-# Docker
+# Runtime data
 ########################################
 
-docker-compose.override.yml
+data/
+logs/
+runtime/
+
+########################################
+# Docker logs
+########################################
 
 *.log
-*.pid
 
 ########################################
-# Build artifacts
-########################################
-
-build/
-dist/
-tmp/
-temp/
-
-########################################
-# Python (if using scripts)
-########################################
-
-__pycache__/
-*.pyc
-*.pyo
-*.pyd
-
-########################################
-# Linux
+# Linux temp
 ########################################
 
 *~
@@ -68,48 +61,28 @@ __pycache__/
 *.swo
 
 ########################################
-# VS Code
+# IDE
 ########################################
 
 .vscode/
-
-########################################
-# JetBrains
-########################################
-
 .idea/
 
 ########################################
-# OS files
+# OS
 ########################################
 
 .DS_Store
 Thumbs.db
 
 ########################################
-# GNS3 runtime files
+# Python cache
 ########################################
 
-*.gns3~
-*.gns3.backup
+__pycache__/
+*.pyc
 
 ########################################
-# Azure / deployment secrets
-########################################
-
-azure-config.json
-credentials.json
-
-########################################
-# Local data directories
-########################################
-
-data/
-runtime/
-logs/
-
-########################################
-# Terraform (if used later)
+# Terraform
 ########################################
 
 .terraform/
