@@ -27,8 +27,8 @@ services:
       - ./GNS3:/root/GNS3
       - ./share:/server/.local/share
       # Alla olevat tiedostot ovat samassa kansiossa kuin tämä tiedosto.
-      - ./init-tap-dhcp2.sh:/usr/local/bin/init-tap-dhcp2.sh:ro
-      - ./init-tap-virbr0.sh:/usr/local/bin/init-tap-virbr0.sh:ro
+      - ./init-tap.sh:/usr/local/bin/init-tap.sh:ro
+      #- ./init-tap-virbr0.sh:/usr/local/bin/init-tap-virbr0.sh:ro
       - ./start-gns3.sh:/usr/local/bin/start-gns3.sh:ro
 
     networks:
