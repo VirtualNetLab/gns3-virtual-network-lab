@@ -6,7 +6,7 @@ echo "päivitetään systemi..."
 apt update -y
 
 echo "ladataan docker..."
-apt install -y docker.io docker-compose-plugin git
+apt install -y docker.io git
 
 echo "käynnistetään Docker..."
 systemctl enable docker
