@@ -1,128 +1,124 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# ----------------------------
-# Settings
-# ----------------------------
-TARGET_USER="${SUDO_USER:-$USER}"
-TARGET_HOME="$(getent passwd "${TARGET_USER}" | cut -d: -f6)"
-
-REPO_URL="https://github.com/VirtualNetLab/gns3-virtual-network-lab.git"
-REPO_DIR="${TARGET_HOME}/gns3-virtual-network-lab"
-
-SCRIPTS_DIR="${REPO_DIR}/scripts"
-LABNET_SCRIPT="${SCRIPTS_DIR}/create-labnet.sh"
-
-GNS3_COMPOSE_DIR="${REPO_DIR}/docker/gns3"
-WG_COMPOSE_DIR="${REPO_DIR}/docker/wireguard-stack"
-
-# ----------------------------
-# Helpers
-# ----------------------------
 log() { echo -e "\n==> $*"; }
 
 need_root() {
   if [[ "${EUID}" -ne 0 ]]; then
-    echo "ERROR: Aja tämä scripti rootina tai sudolla: sudo $0" >&2
+    echo "ERROR: Run as root (CSE runs as root)." >&2
     exit 1
   fi
 }
 
-command_exists() { command -v "$1" >/dev/null 2>&1; }
+wait_for_apt_locks() {
+  while \
+    fuser /var/lib/dpkg/lock-frontend >/dev/null 2>&1 || \
+    fuser /var/lib/dpkg/lock >/dev/null 2>&1 || \
+    fuser /var/cache/apt/archives/lock >/dev/null 2>&1; do
+    log "Waiting for apt/dpkg locks..."
+    sleep 5
+  done
+}
 
-# ----------------------------
-# Main
-# ----------------------------
+ensure_user_exists() {
+  local u="$1"
+  if ! id "${u}" >/dev/null 2>&1; then
+    echo "ERROR: User '${u}' does not exist on this VM (yet)." >&2
+    exit 1
+  fi
+}
+
+run_as_user() {
+  # Run command as login shell for correct HOME/PATH in CSE context
+  local u="$1"
+  shift
+  sudo -u "${u}" bash -lc "$*"
+}
+
 need_root
 
-log "Päivitetään pakettilistat ja perusriippuvuudet..."
+ADMIN_USER="${1:-}"
+if [[ -z "${ADMIN_USER}" ]]; then
+  echo "ERROR: Missing admin username argument." >&2
+  echo "Usage: $0 <adminUsername>" >&2
+  exit 1
+fi
+ensure_user_exists "${ADMIN_USER}"
+
+# Ensure git exists (small dependency; safe in CSE)
+log "Ensuring git is installed..."
+wait_for_apt_locks
 apt-get update -y
-apt-get install -y ca-certificates curl gnupg lsb-release git
+apt-get install -y git
 
-# --- Docker install (only if missing) ---
-if command_exists docker; then
-  log "Docker löytyy jo: $(docker --version)"
-else
-  log "Docker puuttuu -> asennetaan Docker (repo + gpg + paketit)..."
-
-  install -m 0755 -d /etc/apt/keyrings
-
-  if [[ ! -f /etc/apt/keyrings/docker.gpg ]]; then
-    curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg
-    chmod a+r /etc/apt/keyrings/docker.gpg
-  else
-    log "Docker GPG-avain on jo olemassa, ohitetaan."
-  fi
-
-  if [[ ! -f /etc/apt/sources.list.d/docker.list ]]; then
-    echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" \
-      > /etc/apt/sources.list.d/docker.list
-  else
-    log "Docker apt-repo on jo olemassa, ohitetaan."
-  fi
-
-  apt-get update -y
-  apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
-
-  systemctl enable --now docker
+# Ensure docker exists + daemon running
+if ! command -v docker >/dev/null 2>&1; then
+  echo "ERROR: docker not found. Install Docker first (previous script)." >&2
+  exit 1
 fi
 
-# --- Docker service up ---
-if systemctl is-active --quiet docker; then
-  log "Docker-palvelu on käynnissä."
-else
-  log "Käynnistetään Docker-palvelu..."
-  systemctl enable --now docker
-fi
+log "Ensuring Docker service is running..."
+systemctl enable --now docker
 
-# --- Add invoking user to docker group (if not already) ---
-# If running via sudo, use SUDO_USER as the target; else use current user.
+# Paths
+USER_HOME="$(getent passwd "${ADMIN_USER}" | cut -d: -f6)"
+REPO_URL="https://github.com/VirtualNetLab/gns3-virtual-network-lab.git"
+REPO_DIR="${USER_HOME}/gns3-virtual-network-lab"
 
-if id -nG "${TARGET_USER}" | grep -qw docker; then
-  log "User ${TARGET_USER} on jo docker-ryhmässä."
-else
-  log "Lisätään user ${TARGET_USER} docker-ryhmään..."
-  usermod -aG docker "${TARGET_USER}"
-fi
+WG_DIR="${REPO_DIR}/docker/wireguard-stack"
+GNS3_DIR="${REPO_DIR}/docker/gns3"
 
-# --- Clone / update repo ---
-log "Haetaan GNS3 lab repo..."
+# Clone or update repo (as the user)
+log "Cloning/updating repo to ${REPO_DIR} ..."
 if [[ -d "${REPO_DIR}/.git" ]]; then
-  log "Repo löytyy jo (${REPO_DIR}) -> git pull"
-  sudo -u "${TARGET_USER}" git -C "${REPO_DIR}" pull
+  run_as_user "${ADMIN_USER}" "git -C '${REPO_DIR}' pull"
 elif [[ -d "${REPO_DIR}" ]]; then
-  log "Kansio ${REPO_DIR} löytyy mutta ei näytä git-repolta -> EI kloonata päälle. Poista/siirrä kansio jos haluat kloonata uudestaan."
+  echo "ERROR: ${REPO_DIR} exists but is not a git repo. Move/delete it." >&2
+  exit 1
 else
-  sudo -u "${TARGET_USER}" git clone "${REPO_URL}" "${REPO_DIR}"
+  run_as_user "${ADMIN_USER}" "git clone '${REPO_URL}' '${REPO_DIR}'"
 fi
 
-# --- Create labnet (script must be executable) ---
-log "Luodaan/tarkistetaan labnet..."
-if [[ -f "${LABNET_SCRIPT}" ]]; then
-  chmod +x "${LABNET_SCRIPT}"
-  sudo -u "${TARGET_USER}" bash -lc "cd '${SCRIPTS_DIR}' && ./create-labnet.sh"
+# Create docker network labnet (idempotent)
+log "Ensuring Docker network 'labnet' exists..."
+if docker network inspect labnet >/dev/null 2>&1; then
+  log "Network labnet already exists."
 else
-  echo "ERROR: Labnet-scriptiä ei löydy: ${LABNET_SCRIPT}" >&2
+  # Create as the admin user (requires docker group membership, set by previous script)
+  run_as_user "${ADMIN_USER}" "docker network create labnet"
+  log "Created network labnet."
+fi
+
+# Start WireGuard first
+log "Starting WireGuard stack (first)..."
+if [[ ! -d "${WG_DIR}" ]]; then
+  echo "ERROR: WireGuard directory not found: ${WG_DIR}" >&2
   exit 1
 fi
 
-# --- Start compose stacks ---
-
-log "Käynnistetään WireGuard stack..."
-if [[ -f "${WG_COMPOSE_DIR}/compose.yaml" || -f "${WG_COMPOSE_DIR}/docker-compose.yml" || -f "${WG_COMPOSE_DIR}/docker-compose.yaml" ]]; then
-  sudo -u "${TARGET_USER}" bash -lc "cd '${WG_COMPOSE_DIR}' && docker compose up -d"
+# Verify compose file exists
+if [[ -f "${WG_DIR}/compose.yaml" || -f "${WG_DIR}/docker-compose.yml" || -f "${WG_DIR}/docker-compose.yaml" ]]; then
+  run_as_user "${ADMIN_USER}" "cd '${WG_DIR}' && docker compose up -d"
 else
-  echo "ERROR: Compose-tiedostoa ei löydy kansiosta: ${WG_COMPOSE_DIR}" >&2
+  echo "ERROR: Compose file not found in: ${WG_DIR}" >&2
   exit 1
 fi
 
-log "Käynnistetään GNS3 stack..."
-if [[ -f "${GNS3_COMPOSE_DIR}/compose.yaml" || -f "${GNS3_COMPOSE_DIR}/docker-compose.yml" || -f "${GNS3_COMPOSE_DIR}/docker-compose.yaml" ]]; then
-  sudo -u "${TARGET_USER}" bash -lc "cd '${GNS3_COMPOSE_DIR}' && docker compose up -d"
-else
-  echo "ERROR: Compose-tiedostoa ei löydy kansiosta: ${GNS3_COMPOSE_DIR}" >&2
+# Then start GNS3
+log "Starting GNS3 stack (second)..."
+if [[ ! -d "${GNS3_DIR}" ]]; then
+  echo "ERROR: GNS3 directory not found: ${GNS3_DIR}" >&2
   exit 1
 fi
 
-log "Setup valmis!"
-echo "HUOM: Jos lisättiin docker-ryhmään (${TARGET_USER}), kirjaudu ulos ja takaisin sisään (tai aja: newgrp docker) jotta ryhmämuutos astuu voimaan."
+if [[ -f "${GNS3_DIR}/compose.yaml" || -f "${GNS3_DIR}/docker-compose.yml" || -f "${GNS3_DIR}/docker-compose.yaml" ]]; then
+  run_as_user "${ADMIN_USER}" "cd '${GNS3_DIR}' && docker compose up -d"
+else
+  echo "ERROR: Compose file not found in: ${GNS3_DIR}" >&2
+  exit 1
+fi
+
+log "Done."
+echo "Repo: ${REPO_DIR}"
+echo "WireGuard: started"
+echo "GNS3: started"
