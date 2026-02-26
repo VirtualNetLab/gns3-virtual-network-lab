@@ -5,7 +5,7 @@ log() { echo -e "\n==> $*"; }
 
 need_root() {
   if [[ "${EUID}" -ne 0 ]]; then
-    echo "ERROR: Run as root (CSE runs as root)." >&2
+    echo "ERROR: Run as root (Azure CSE runs as root)." >&2
     exit 1
   fi
 }
@@ -29,7 +29,6 @@ ensure_user_exists() {
 }
 
 run_as_user() {
-  # Run command as login shell for correct HOME/PATH in CSE context
   local u="$1"
   shift
   sudo -u "${u}" bash -lc "$*"
@@ -45,7 +44,7 @@ if [[ -z "${ADMIN_USER}" ]]; then
 fi
 ensure_user_exists "${ADMIN_USER}"
 
-# Ensure git exists (small dependency; safe in CSE)
+# Ensure git exists
 log "Ensuring git is installed..."
 wait_for_apt_locks
 apt-get update -y
@@ -53,18 +52,18 @@ apt-get install -y git
 
 # Ensure docker exists + daemon running
 if ! command -v docker >/dev/null 2>&1; then
-  echo "ERROR: docker not found. Install Docker first (previous script)." >&2
+  echo "ERROR: docker not found. Install Docker first." >&2
   exit 1
 fi
-
 log "Ensuring Docker service is running..."
 systemctl enable --now docker
 
-# Paths
+# Repo paths
 USER_HOME="$(getent passwd "${ADMIN_USER}" | cut -d: -f6)"
 REPO_URL="https://github.com/VirtualNetLab/gns3-virtual-network-lab.git"
 REPO_DIR="${USER_HOME}/gns3-virtual-network-lab"
 
+LABNET_SCRIPT="${REPO_DIR}/scripts/create-labnet.sh"
 WG_DIR="${REPO_DIR}/docker/wireguard-stack"
 GNS3_DIR="${REPO_DIR}/docker/gns3"
 
@@ -79,26 +78,23 @@ else
   run_as_user "${ADMIN_USER}" "git clone '${REPO_URL}' '${REPO_DIR}'"
 fi
 
-# Create docker network labnet (idempotent)
-log "Ensuring Docker network 'labnet' exists..."
-if docker network inspect labnet >/dev/null 2>&1; then
-  log "Network labnet already exists."
+# Make sure repo ownership is correct (CSE safety)
+chown -R "${ADMIN_USER}:${ADMIN_USER}" "${REPO_DIR}" || true
+
+# Create labnet using repo script (run as root for reliability)
+log "Creating labnet via ${LABNET_SCRIPT} ..."
+if [[ -f "${LABNET_SCRIPT}" ]]; then
+  chmod +x "${LABNET_SCRIPT}"
+  bash "${LABNET_SCRIPT}"
 else
-  # Create as the admin user (requires docker group membership, set by previous script)
-  run_as_user "${ADMIN_USER}" "docker network create labnet"
-  log "Created network labnet."
+  echo "ERROR: Labnet script not found: ${LABNET_SCRIPT}" >&2
+  exit 1
 fi
 
 # Start WireGuard first
 log "Starting WireGuard stack (first)..."
-if [[ ! -d "${WG_DIR}" ]]; then
-  echo "ERROR: WireGuard directory not found: ${WG_DIR}" >&2
-  exit 1
-fi
-
-# Verify compose file exists
 if [[ -f "${WG_DIR}/compose.yaml" || -f "${WG_DIR}/docker-compose.yml" || -f "${WG_DIR}/docker-compose.yaml" ]]; then
-  run_as_user "${ADMIN_USER}" "cd '${WG_DIR}' && docker compose up -d"
+  (cd "${WG_DIR}" && docker compose up -d)
 else
   echo "ERROR: Compose file not found in: ${WG_DIR}" >&2
   exit 1
@@ -106,19 +102,18 @@ fi
 
 # Then start GNS3
 log "Starting GNS3 stack (second)..."
-if [[ ! -d "${GNS3_DIR}" ]]; then
-  echo "ERROR: GNS3 directory not found: ${GNS3_DIR}" >&2
-  exit 1
-fi
-
 if [[ -f "${GNS3_DIR}/compose.yaml" || -f "${GNS3_DIR}/docker-compose.yml" || -f "${GNS3_DIR}/docker-compose.yaml" ]]; then
-  run_as_user "${ADMIN_USER}" "cd '${GNS3_DIR}' && docker compose up -d"
+  (cd "${GNS3_DIR}" && docker compose up -d)
 else
   echo "ERROR: Compose file not found in: ${GNS3_DIR}" >&2
   exit 1
 fi
 
+# Ensure repo stays writable for admin user after root ran scripts
+chown -R "${ADMIN_USER}:${ADMIN_USER}" "${REPO_DIR}" || true
+
 log "Done."
 echo "Repo: ${REPO_DIR}"
+echo "labnet: created/ensured via scripts/create-labnet.sh"
 echo "WireGuard: started"
 echo "GNS3: started"
