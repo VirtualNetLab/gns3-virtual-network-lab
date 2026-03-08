@@ -4,6 +4,7 @@ set -euo pipefail
 WG_SUBNET="${1:-10.8.0.0/24}"
 VNET_PREFIX="${2:-10.10.0.0/16}"
 WG_PORT="${3:-51820}"
+SCRIPT_BASE_URL="${4:-}"
 
 WG_ADDR="${WG_SUBNET%0/24}1/24"
 WG_NET_CIDR="${WG_SUBNET}"
@@ -35,9 +36,17 @@ cat > /etc/wireguard/wg0.conf <<EOF
 Address = ${WG_ADDR}
 ListenPort = ${WG_PORT}
 PrivateKey = ${SERVER_PRIVATE_KEY}
+
 PostUp = sysctl -w net.ipv4.ip_forward=1
-PostUp = iptables -t nat -A POSTROUTING -s ${WG_NET_CIDR} -o ${DEFAULT_IF} -j MASQUERADE
-PostDown = iptables -t nat -D POSTROUTING -s ${WG_NET_CIDR} -o ${DEFAULT_IF} -j MASQUERADE
+PostUp = iptables -A FORWARD -i wg0 -d ${VNET_PREFIX} -j ACCEPT
+PostUp = iptables -A FORWARD -o wg0 -s ${VNET_PREFIX} -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
+PostUp = iptables -A FORWARD -i wg0 -j DROP
+PostUp = iptables -t nat -A POSTROUTING -s ${WG_NET_CIDR} -d ${VNET_PREFIX} -o ${DEFAULT_IF} -j MASQUERADE
+
+PostDown = iptables -t nat -D POSTROUTING -s ${WG_NET_CIDR} -d ${VNET_PREFIX} -o ${DEFAULT_IF} -j MASQUERADE
+PostDown = iptables -D FORWARD -i wg0 -j DROP
+PostDown = iptables -D FORWARD -o wg0 -s ${VNET_PREFIX} -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
+PostDown = iptables -D FORWARD -i wg0 -d ${VNET_PREFIX} -j ACCEPT
 EOF
 
 chmod 600 /etc/wireguard/wg0.conf
@@ -72,3 +81,14 @@ EOF
 
 echo "WireGuard installation complete"
 cat /var/lib/wireguard/wireguard-info.txt
+
+PEER_SCRIPT_URL="${SCRIPT_BASE_URL}/wireguard-add-peers.sh"
+PEER_SCRIPT_PATH="/usr/local/sbin/wireguard-add-peers.sh"
+
+echo "Downloading peer management script from ${PEER_SCRIPT_URL}"
+
+curl -fsSL "${PEER_SCRIPT_URL}" -o "${PEER_SCRIPT_PATH}"
+
+chmod 755 "${PEER_SCRIPT_PATH}"
+
+echo "wireguard-add-peers.sh installed at ${PEER_SCRIPT_PATH}"
