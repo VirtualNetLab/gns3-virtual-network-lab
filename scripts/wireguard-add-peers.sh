@@ -2,11 +2,14 @@
 set -euo pipefail
 
 # Usage:
-#   sudo bash wireguard-add-peers.sh users.csv PUBLIC_ENDPOINT
+#   sudo bash wireguard-add-peers.sh [users.csv] PUBLIC_ENDPOINT
 #
-# Example:
-#   sudo bash wireguard-add-peers.sh students.csv 20.74.83.219
-#   sudo bash wireguard-add-peers.sh students.csv wg.example.com
+# Examples:
+#   sudo bash wireguard-add-peers.sh /mnt/wireguard-share/input/users.csv 20.74.83.219
+#   sudo bash wireguard-add-peers.sh users.csv wg.example.com
+#
+# If the CSV path is omitted, default is:
+#   /mnt/wireguard-share/input/users.csv
 #
 # CSV format:
 #   one email per row, for example:
@@ -14,22 +17,51 @@ set -euo pipefail
 #   tjsdd002@students.oamk.fi
 #   teacher001@oamk.fi
 
-CSV_FILE="${1:-}"
-SERVER_ENDPOINT="${2:-}"
+WIREGUARD_ENV_FILE="/etc/wireguard/wireguard.env"
 
-WG_CONF="/etc/wireguard/wg0.conf"
-WG_DIR="/etc/wireguard"
-CLIENT_DIR="${WG_DIR}/clients"
-SERVER_PUBLIC_KEY_FILE="${WG_DIR}/server_public.key"
-SERVER_PORT="51820"
-WG_NETWORK_BASE="10.8.0"
-SERVER_ADDRESS="10.8.0.1/24"
-VNET_ALLOWED_IPS="10.10.0.0/16"
-
-if [ -z "${CSV_FILE}" ] || [ -z "${SERVER_ENDPOINT}" ]; then
-  echo "Usage: sudo bash wireguard-add-peers.sh users.csv PUBLIC_ENDPOINT" >&2
+if [ ! -f "${WIREGUARD_ENV_FILE}" ]; then
+  echo "ERROR: WireGuard env file not found: ${WIREGUARD_ENV_FILE}" >&2
   exit 1
 fi
+
+# shellcheck disable=SC1091
+source "${WIREGUARD_ENV_FILE}"
+
+WG_CONF="${WG_CONF:-/etc/wireguard/wg0.conf}"
+WG_DIR="${WG_DIR:-/etc/wireguard}"
+LOCAL_CLIENT_DIR="${LOCAL_CLIENT_DIR:-${WG_DIR}/clients}"
+SERVER_PUBLIC_KEY_FILE="${SERVER_PUBLIC_KEY_FILE:-${WG_DIR}/server_public.key}"
+
+SHARE_ROOT="${SHARE_ROOT:-/mnt/wireguard-share}"
+SHARE_INPUT_DIR="${SHARE_INPUT_DIR:-${SHARE_ROOT}/input}"
+SHARE_CONFIG_DIR="${SHARE_CONFIG_DIR:-${SHARE_ROOT}/configs}"
+SHARE_LOG_DIR="${SHARE_LOG_DIR:-${SHARE_ROOT}/logs}"
+
+SERVER_PORT="${WG_PORT:-51820}"
+WG_NETWORK_BASE="${WG_NETWORK_BASE:?WG_NETWORK_BASE missing from ${WIREGUARD_ENV_FILE}}"
+VNET_ALLOWED_IPS="${VNET_PREFIX:?VNET_PREFIX missing from ${WIREGUARD_ENV_FILE}}"
+
+DEFAULT_CSV_FILE="${SHARE_INPUT_DIR}/users.csv"
+
+if [ "$#" -eq 1 ]; then
+  CSV_FILE="${DEFAULT_CSV_FILE}"
+  SERVER_ENDPOINT="${1}"
+elif [ "$#" -eq 2 ]; then
+  CSV_FILE="${1}"
+  SERVER_ENDPOINT="${2}"
+else
+  echo "Usage: sudo bash wireguard-add-peers.sh [users.csv] PUBLIC_ENDPOINT" >&2
+  exit 1
+fi
+
+if [ -z "$(trim "${SERVER_ENDPOINT}")" ]; then
+  echo "ERROR: PUBLIC_ENDPOINT is empty" >&2
+  exit 1
+fi
+
+SUMMARY_FILE="${SHARE_LOG_DIR}/wireguard-peers-summary.csv"
+TMP_REPORT="$(mktemp)"
+trap 'rm -f "${TMP_REPORT}"' EXIT
 
 if [ ! -f "${CSV_FILE}" ]; then
   echo "ERROR: CSV file not found: ${CSV_FILE}" >&2
@@ -46,8 +78,17 @@ if [ ! -f "${SERVER_PUBLIC_KEY_FILE}" ]; then
   exit 1
 fi
 
-mkdir -p "${CLIENT_DIR}"
-chmod 700 "${CLIENT_DIR}"
+mkdir -p "${LOCAL_CLIENT_DIR}"
+chmod 700 "${LOCAL_CLIENT_DIR}"
+
+if mountpoint -q "${SHARE_ROOT}"; then
+  mkdir -p "${SHARE_INPUT_DIR}" "${SHARE_CONFIG_DIR}" "${SHARE_LOG_DIR}"
+else
+  echo "WARNING: ${SHARE_ROOT} is not mounted, generated configs will only be stored locally." | tee -a "${TMP_REPORT}"
+  SHARE_CONFIG_DIR=""
+  SHARE_LOG_DIR=""
+  SUMMARY_FILE=""
+fi
 
 SERVER_PUBLIC_KEY="$(cat "${SERVER_PUBLIC_KEY_FILE}")"
 
@@ -74,8 +115,15 @@ email_block_exists() {
 }
 
 next_free_ip() {
-  local used_ips
-  used_ips="$(grep -E 'AllowedIPs = 10\.8\.0\.[0-9]+/32' "${WG_CONF}" | sed -E 's/.*AllowedIPs = (10\.8\.0\.([0-9]+))\/32/\2/' || true)"
+  local escaped_base used_ips
+
+  escaped_base="$(printf '%s' "${WG_NETWORK_BASE}" | sed 's/\./\\./g')"
+
+  used_ips="$(
+    grep -E "AllowedIPs = ${escaped_base}\.[0-9]+/32" "${WG_CONF}" \
+    | sed -E "s/.*AllowedIPs = ${escaped_base}\.([0-9]+)\/32/\1/" \
+    || true
+  )"
 
   for host in $(seq 2 254); do
     if ! printf '%s\n' "${used_ips}" | grep -qx "${host}"; then
@@ -84,7 +132,7 @@ next_free_ip() {
     fi
   done
 
-  echo "ERROR: No free IPs left in ${WG_NETWORK_BASE}.0/24" >&2
+  echo "ERROR: No free IPs left in ${WG_SUBNET}" >&2
   exit 1
 }
 
@@ -103,10 +151,9 @@ EOF
 }
 
 create_client_config() {
-  local email="$1"
-  local client_private_key="$2"
-  local client_ip="$3"
-  local out_file="$4"
+  local client_private_key="$1"
+  local client_ip="$2"
+  local out_file="$3"
 
   cat > "${out_file}" <<EOF
 [Interface]
@@ -122,8 +169,35 @@ EOF
   chmod 600 "${out_file}"
 }
 
-TMP_REPORT="$(mktemp)"
-trap 'rm -f "${TMP_REPORT}"' EXIT
+copy_to_share_if_available() {
+  local src_file="$1"
+  local dst_file="$2"
+
+  if [ -n "${SHARE_CONFIG_DIR}" ]; then
+    cp -f "${src_file}" "${dst_file}"
+    chmod 600 "${dst_file}"
+  fi
+}
+
+write_summary_header_if_needed() {
+  if [ -n "${SUMMARY_FILE}" ] && [ ! -f "${SUMMARY_FILE}" ]; then
+    echo "email,client_ip,local_conf,share_conf" > "${SUMMARY_FILE}"
+    chmod 600 "${SUMMARY_FILE}"
+  fi
+}
+
+write_summary_line() {
+  local email="$1"
+  local client_ip="$2"
+  local local_conf="$3"
+  local share_conf="$4"
+
+  if [ -n "${SUMMARY_FILE}" ]; then
+    echo "${email},${client_ip},${local_conf},${share_conf}" >> "${SUMMARY_FILE}"
+  fi
+}
+
+write_summary_header_if_needed
 
 echo "Processing users from ${CSV_FILE}"
 
@@ -146,9 +220,13 @@ while IFS= read -r raw_line || [ -n "${raw_line}" ]; do
   fi
 
   safe_name="$(sanitize_name "${email}")"
-  private_key_file="${CLIENT_DIR}/${safe_name}.key"
-  public_key_file="${CLIENT_DIR}/${safe_name}.pub"
-  conf_file="${CLIENT_DIR}/${safe_name}.conf"
+  private_key_file="${LOCAL_CLIENT_DIR}/${safe_name}.key"
+  public_key_file="${LOCAL_CLIENT_DIR}/${safe_name}.pub"
+  local_conf_file="${LOCAL_CLIENT_DIR}/${safe_name}.conf"
+  share_conf_file=""
+  if [ -n "${SHARE_CONFIG_DIR}" ]; then
+    share_conf_file="${SHARE_CONFIG_DIR}/${safe_name}.conf"
+  fi
 
   if email_block_exists "${email}"; then
     echo "User already exists in wg0.conf, skipping: ${email}" | tee -a "${TMP_REPORT}"
@@ -163,8 +241,7 @@ while IFS= read -r raw_line || [ -n "${raw_line}" ]; do
     wg genkey | tee "${private_key_file}" | wg pubkey > "${public_key_file}"
     client_private_key="$(cat "${private_key_file}")"
     client_public_key="$(cat "${public_key_file}")"
-    chmod 600 "${private_key_file}"
-    chmod 600 "${public_key_file}"
+    chmod 600 "${private_key_file}" "${public_key_file}"
   fi
 
   if peer_exists "${client_public_key}"; then
@@ -175,14 +252,19 @@ while IFS= read -r raw_line || [ -n "${raw_line}" ]; do
   client_ip="$(next_free_ip)"
 
   append_peer_to_wgconf "${email}" "${client_public_key}" "${client_ip}"
-  create_client_config "${email}" "${client_private_key}" "${client_ip}" "${conf_file}"
+  create_client_config "${client_private_key}" "${client_ip}" "${local_conf_file}"
 
-  echo "Added ${email} -> ${client_ip} -> ${conf_file}" | tee -a "${TMP_REPORT}"
+  if [ -n "${share_conf_file}" ]; then
+    copy_to_share_if_available "${local_conf_file}" "${share_conf_file}"
+  fi
+
+  write_summary_line "${email}" "${client_ip}" "${local_conf_file}" "${share_conf_file}"
+
+  echo "Added ${email} -> ${client_ip} -> ${local_conf_file}${share_conf_file:+ -> ${share_conf_file}}" | tee -a "${TMP_REPORT}"
 done < "${CSV_FILE}"
 
 chmod 600 "${WG_CONF}"
 
-wg-quick strip wg0 >/dev/null 2>&1 || true
 systemctl restart wg-quick@wg0
 systemctl --no-pager --full status wg-quick@wg0 || true
 
@@ -190,4 +272,12 @@ echo
 echo "Summary:"
 cat "${TMP_REPORT}"
 echo
-echo "Client configs are in: ${CLIENT_DIR}"
+echo "Local client configs are in: ${LOCAL_CLIENT_DIR}"
+
+if [ -n "${SHARE_CONFIG_DIR}" ]; then
+  echo "Shared client configs are in: ${SHARE_CONFIG_DIR}"
+fi
+
+if [ -n "${SUMMARY_FILE}" ]; then
+  echo "Summary CSV: ${SUMMARY_FILE}"
+fi
