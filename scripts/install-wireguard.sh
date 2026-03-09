@@ -10,6 +10,7 @@ STORAGE_ACCOUNT_NAME="${5:-}"
 FILE_SHARE_NAME="${6:-wireguard}"
 STORAGE_ACCOUNT_KEY="${7:-}"
 PUBLIC_ENDPOINT="${8:-}"
+ADMIN_EMAIL="${9:-}"
 
 if ! printf '%s' "${WG_SUBNET}" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+\.0/24$'; then
   echo "ERROR: WG_SUBNET must be in x.x.x.0/24 format, got: ${WG_SUBNET}" >&2
@@ -46,6 +47,7 @@ WG_SUBNET=${WG_SUBNET}
 WG_ADDR=${WG_ADDR}
 WG_NETWORK_BASE=${WG_NETWORK_BASE}
 WG_SERVER_ENDPOINT=${PUBLIC_ENDPOINT}
+ADMIN_EMAIL=${ADMIN_EMAIL}
 VNET_PREFIX=${VNET_PREFIX}
 WG_PORT=${WG_PORT}
 SERVER_PUBLIC_KEY_FILE=/etc/wireguard/server_public.key
@@ -119,6 +121,30 @@ EOF
   mkdir -p /mnt/wireguard-share/input
   mkdir -p /mnt/wireguard-share/configs
   mkdir -p /mnt/wireguard-share/logs
+fi
+
+USERS_CSV="/mnt/wireguard-share/input/users.csv"
+
+if [ -n "${ADMIN_EMAIL}" ]; then
+  ADMIN_EMAIL="$(printf '%s' "${ADMIN_EMAIL}" | tr '[:upper:]' '[:lower:]' | xargs)"
+fi
+
+if [ -n "${ADMIN_EMAIL}" ]; then
+  if printf '%s' "${ADMIN_EMAIL}" | grep -Eq '^[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}$'; then
+    touch "${USERS_CSV}"
+    chmod 600 "${USERS_CSV}"
+
+    if ! grep -Fq "${ADMIN_EMAIL}" "${USERS_CSV}"; then
+      echo "${ADMIN_EMAIL}" >> "${USERS_CSV}"
+      echo "Added admin email to ${USERS_CSV}: ${ADMIN_EMAIL}"
+    else
+      echo "Admin email already exists in ${USERS_CSV}: ${ADMIN_EMAIL}"
+    fi
+  else
+    echo "WARNING: ADMIN_EMAIL is not a valid email address: ${ADMIN_EMAIL}"
+  fi
+else
+  echo "WARNING: ADMIN_EMAIL is empty, users.csv was not seeded."
 fi
 
 systemctl enable wg-quick@wg0
