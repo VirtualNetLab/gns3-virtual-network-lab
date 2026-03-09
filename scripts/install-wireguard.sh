@@ -9,6 +9,8 @@ SCRIPT_BASE_URL="${4:-}"
 STORAGE_ACCOUNT_NAME="${5:-}"
 FILE_SHARE_NAME="${6:-wireguard}"
 STORAGE_ACCOUNT_KEY="${7:-}"
+PUBLIC_ENDPOINT="${8:-}"
+ADMIN_EMAIL="${9:-}"
 
 if ! printf '%s' "${WG_SUBNET}" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+\.0/24$'; then
   echo "ERROR: WG_SUBNET must be in x.x.x.0/24 format, got: ${WG_SUBNET}" >&2
@@ -44,6 +46,8 @@ cat > "${WIREGUARD_ENV_FILE}" <<EOF
 WG_SUBNET=${WG_SUBNET}
 WG_ADDR=${WG_ADDR}
 WG_NETWORK_BASE=${WG_NETWORK_BASE}
+WG_SERVER_ENDPOINT=${PUBLIC_ENDPOINT}
+ADMIN_EMAIL=${ADMIN_EMAIL}
 VNET_PREFIX=${VNET_PREFIX}
 WG_PORT=${WG_PORT}
 SERVER_PUBLIC_KEY_FILE=/etc/wireguard/server_public.key
@@ -119,6 +123,30 @@ EOF
   mkdir -p /mnt/wireguard-share/logs
 fi
 
+USERS_CSV="/mnt/wireguard-share/input/users.csv"
+
+if [ -n "${ADMIN_EMAIL}" ]; then
+  ADMIN_EMAIL="$(printf '%s' "${ADMIN_EMAIL}" | tr '[:upper:]' '[:lower:]' | xargs)"
+fi
+
+if [ -n "${ADMIN_EMAIL}" ]; then
+  if printf '%s' "${ADMIN_EMAIL}" | grep -Eq '^[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}$'; then
+    touch "${USERS_CSV}"
+    chmod 600 "${USERS_CSV}"
+
+    if ! grep -Fq "${ADMIN_EMAIL}" "${USERS_CSV}"; then
+      echo "${ADMIN_EMAIL}" >> "${USERS_CSV}"
+      echo "Added admin email to ${USERS_CSV}: ${ADMIN_EMAIL}"
+    else
+      echo "Admin email already exists in ${USERS_CSV}: ${ADMIN_EMAIL}"
+    fi
+  else
+    echo "WARNING: ADMIN_EMAIL is not a valid email address: ${ADMIN_EMAIL}"
+  fi
+else
+  echo "WARNING: ADMIN_EMAIL is empty, users.csv was not seeded."
+fi
+
 systemctl enable wg-quick@wg0
 systemctl restart wg-quick@wg0
 
@@ -168,3 +196,39 @@ if [ -n "${STORAGE_ACCOUNT_NAME}" ] && [ -n "${FILE_SHARE_NAME}" ]; then
   echo "Azure Files share mounted at /mnt/wireguard-share"
   echo "Put users.csv in /mnt/wireguard-share/input/users.csv"
 fi
+
+WATCH_SCRIPT_URL="${SCRIPT_BASE_URL}/wireguard-watch-users-csv.sh"
+WATCH_SCRIPT_PATH="/usr/local/sbin/wireguard-watch-users-csv.sh"
+
+echo "Downloading watcher script from ${WATCH_SCRIPT_URL}"
+curl -fsSL "${WATCH_SCRIPT_URL}" -o "${WATCH_SCRIPT_PATH}"
+chmod 755 "${WATCH_SCRIPT_PATH}"
+
+echo "Creating systemd service for CSV watcher"
+cat > /etc/systemd/system/watch-users-csv.service <<'EOF'
+[Unit]
+Description=Check Azure Files users.csv for changes
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/wireguard-watch-users-csv.sh
+EOF
+
+echo "Creating systemd timer for CSV watcher"
+cat > /etc/systemd/system/watch-users-csv.timer <<'EOF'
+[Unit]
+Description=Run users.csv watcher every minute
+
+[Timer]
+OnBootSec=1min
+OnUnitActiveSec=1min
+
+[Install]
+WantedBy=timers.target
+EOF
+
+systemctl daemon-reload
+systemctl enable --now watch-users-csv.timer
+
+echo "watch-users-csv.sh installed at ${WATCH_SCRIPT_PATH}"
+echo "watch-users-csv.timer enabled"
