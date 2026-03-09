@@ -170,3 +170,39 @@ if [ -n "${STORAGE_ACCOUNT_NAME}" ] && [ -n "${FILE_SHARE_NAME}" ]; then
   echo "Azure Files share mounted at /mnt/wireguard-share"
   echo "Put users.csv in /mnt/wireguard-share/input/users.csv"
 fi
+
+WATCH_SCRIPT_URL="${SCRIPT_BASE_URL}/wireguard-watch-users-csv.sh"
+WATCH_SCRIPT_PATH="/usr/local/sbin/wireguard-watch-users-csv.sh"
+
+echo "Downloading watcher script from ${WATCH_SCRIPT_URL}"
+curl -fsSL "${WATCH_SCRIPT_URL}" -o "${WATCH_SCRIPT_PATH}"
+chmod 755 "${WATCH_SCRIPT_PATH}"
+
+echo "Creating systemd service for CSV watcher"
+cat > /etc/systemd/system/watch-users-csv.service <<'EOF'
+[Unit]
+Description=Check Azure Files users.csv for changes
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/watch-users-csv.sh
+EOF
+
+echo "Creating systemd timer for CSV watcher"
+cat > /etc/systemd/system/watch-users-csv.timer <<'EOF'
+[Unit]
+Description=Run users.csv watcher every minute
+
+[Timer]
+OnBootSec=1min
+OnUnitActiveSec=1min
+
+[Install]
+WantedBy=timers.target
+EOF
+
+systemctl daemon-reload
+systemctl enable --now watch-users-csv.timer
+
+echo "watch-users-csv.sh installed at ${WATCH_SCRIPT_PATH}"
+echo "watch-users-csv.timer enabled"
