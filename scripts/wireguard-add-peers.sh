@@ -40,22 +40,21 @@ SHARE_LOG_DIR="${SHARE_LOG_DIR:-${SHARE_ROOT}/logs}"
 SERVER_PORT="${WG_PORT:-51820}"
 WG_NETWORK_BASE="${WG_NETWORK_BASE:?WG_NETWORK_BASE missing from ${WIREGUARD_ENV_FILE}}"
 VNET_ALLOWED_IPS="${VNET_PREFIX:?VNET_PREFIX missing from ${WIREGUARD_ENV_FILE}}"
+SERVER_ENDPOINT="${WG_SERVER_ENDPOINT:-}"
 
-DEFAULT_CSV_FILE="${SHARE_INPUT_DIR}/users.csv"
-
-if [ "$#" -eq 1 ]; then
-  CSV_FILE="${DEFAULT_CSV_FILE}"
-  SERVER_ENDPOINT="${1}"
-elif [ "$#" -eq 2 ]; then
-  CSV_FILE="${1}"
-  SERVER_ENDPOINT="${2}"
-else
-  echo "Usage: sudo bash wireguard-add-peers.sh [users.csv] PUBLIC_ENDPOINT" >&2
+if [ -z "${SERVER_ENDPOINT}" ]; then
+  echo "ERROR: WG_SERVER_ENDPOINT missing from ${WIREGUARD_ENV_FILE}" >&2
   exit 1
 fi
 
-if [ -z "$(trim "${SERVER_ENDPOINT}")" ]; then
-  echo "ERROR: PUBLIC_ENDPOINT is empty" >&2
+DEFAULT_CSV_FILE="${SHARE_INPUT_DIR}/users.csv"
+
+if [ "$#" -eq 0 ]; then
+  CSV_FILE="${DEFAULT_CSV_FILE}"
+elif [ "$#" -eq 1 ]; then
+  CSV_FILE="${1}"
+else
+  echo "Usage: sudo bash wireguard-add-peers.sh [users.csv]" >&2
   exit 1
 fi
 

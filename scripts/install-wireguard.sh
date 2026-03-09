@@ -9,6 +9,7 @@ SCRIPT_BASE_URL="${4:-}"
 STORAGE_ACCOUNT_NAME="${5:-}"
 FILE_SHARE_NAME="${6:-wireguard}"
 STORAGE_ACCOUNT_KEY="${7:-}"
+PUBLIC_ENDPOINT="${8:-}"
 
 if ! printf '%s' "${WG_SUBNET}" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+\.0/24$'; then
   echo "ERROR: WG_SUBNET must be in x.x.x.0/24 format, got: ${WG_SUBNET}" >&2
@@ -44,6 +45,7 @@ cat > "${WIREGUARD_ENV_FILE}" <<EOF
 WG_SUBNET=${WG_SUBNET}
 WG_ADDR=${WG_ADDR}
 WG_NETWORK_BASE=${WG_NETWORK_BASE}
+WG_SERVER_ENDPOINT=${PUBLIC_ENDPOINT}
 VNET_PREFIX=${VNET_PREFIX}
 WG_PORT=${WG_PORT}
 SERVER_PUBLIC_KEY_FILE=/etc/wireguard/server_public.key
