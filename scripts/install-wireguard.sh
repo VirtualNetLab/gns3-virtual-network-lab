@@ -185,7 +185,7 @@ Description=Check Azure Files users.csv for changes
 
 [Service]
 Type=oneshot
-ExecStart=/usr/local/sbin/watch-users-csv.sh
+ExecStart=/usr/local/sbin/wireguard-watch-users-csv.sh
 EOF
 
 echo "Creating systemd timer for CSV watcher"
