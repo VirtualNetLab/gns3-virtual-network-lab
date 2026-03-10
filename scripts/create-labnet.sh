@@ -50,6 +50,7 @@ echo "Creating Docker network '$NETWORK_NAME'..."
 docker network create \
   --driver bridge \
   --subnet "$SUBNET" \
+  --opt com.docker.network.bridge.name=labnet0 \
   --gateway "$GATEWAY" \
   --attachable \
   "$NETWORK_NAME" >/dev/null
