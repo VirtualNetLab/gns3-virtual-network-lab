@@ -52,6 +52,8 @@ docker network create \
   --subnet "$SUBNET" \
   --gateway "$GATEWAY" \
   --attachable \
+  -o com.docker.network.bridge.name="${NETWORK_NAME}0" \
+  -o com.docker.network.bridge.gateway_mode_ipv4=nat-unprotected \
   "$NETWORK_NAME" >/dev/null
 
 echo "Created:"
