@@ -19,10 +19,19 @@ docker/wireguard-stack/portainer-data/
 **/wg0.conf
 
 ########################################
-# GNS3 files and images
+# GNS3 runtime files
 ########################################
 
+# GNS3 projects, images, and runtime data
 docker/gns3/GNS3/
+
+# Per-user container instances
+docker/gns3/instances/
+
+# GNS3 temporary files
+*.gns3~
+*.log
+*.tmp
 
 ########################################
 # Environment files
@@ -41,10 +50,11 @@ logs/
 runtime/
 
 ########################################
-# Docker logs
+# Docker runtime
 ########################################
 
-*.log
+docker-compose.override.yml
+docker-compose.local.yml
 
 ########################################
 # Linux temp

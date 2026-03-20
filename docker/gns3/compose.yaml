@@ -1,5 +1,6 @@
 services:
   gns3-server:
+    image: gns3-server:latest
     build:
       context: .
       dockerfile: Dockerfile
