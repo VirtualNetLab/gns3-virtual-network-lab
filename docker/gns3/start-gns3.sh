@@ -10,4 +10,4 @@ set -euo pipefail
 /usr/local/bin/init-tap.sh
  
 # Start GNS3 server (keep container alive)
-exec gns3server --host 0.0.0.0 --port 3080 --config /etc/gns3/gns3_server.conf
+exec gns3server --host 0.0.0.0 --port 3080 --config /server/conf/gns3_server.conf
