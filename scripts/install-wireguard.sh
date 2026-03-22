@@ -192,6 +192,17 @@ chmod 755 "${PEER_SCRIPT_PATH}"
 
 echo "wireguard-add-peers.sh installed at ${PEER_SCRIPT_PATH}"
 
+GNS3_SCRIPT_URL="${SCRIPT_BASE_URL}/create-gns3-container.sh"
+GNS3_SCRIPT_PATH="/usr/local/sbin/create-gns3-container.sh"
+
+echo "Downloading GNS3 container creation script from ${GNS3_SCRIPT_URL}"
+
+curl -fsSL "${GNS3_SCRIPT_URL}" -o "${GNS3_SCRIPT_PATH}"
+
+chmod 755 "${GNS3_SCRIPT_PATH}"
+
+echo "create-gns3-container.sh installed at ${GNS3_SCRIPT_PATH}"
+
 if [ -n "${STORAGE_ACCOUNT_NAME}" ] && [ -n "${FILE_SHARE_NAME}" ]; then
   echo "Azure Files share mounted at /mnt/wireguard-share"
   echo "Put users.csv in /mnt/wireguard-share/input/users.csv"

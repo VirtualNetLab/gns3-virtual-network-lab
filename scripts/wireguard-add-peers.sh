@@ -2,11 +2,11 @@
 set -euo pipefail
 
 # Usage:
-#   sudo bash wireguard-add-peers.sh [users.csv] PUBLIC_ENDPOINT
+#   sudo bash wireguard-add-peers.sh [users.csv]
 #
 # Examples:
-#   sudo bash wireguard-add-peers.sh /mnt/wireguard-share/input/users.csv 20.74.83.219
-#   sudo bash wireguard-add-peers.sh users.csv wg.example.com
+#   sudo bash wireguard-add-peers.sh /mnt/wireguard-share/input/users.csv
+#   sudo bash wireguard-add-peers.sh users.csv
 #
 # If the CSV path is omitted, default is:
 #   /mnt/wireguard-share/input/users.csv
@@ -41,6 +41,9 @@ SERVER_PORT="${WG_PORT:-51820}"
 WG_NETWORK_BASE="${WG_NETWORK_BASE:?WG_NETWORK_BASE missing from ${WIREGUARD_ENV_FILE}}"
 VNET_ALLOWED_IPS="${VNET_PREFIX:?VNET_PREFIX missing from ${WIREGUARD_ENV_FILE}}"
 SERVER_ENDPOINT="${WG_SERVER_ENDPOINT:-}"
+
+REPO_DIR="${REPO_DIR:-/home/ubuntu/gns3-virtual-network-lab}"
+CREATE_GNS3_SCRIPT="${CREATE_GNS3_SCRIPT:-/usr/local/sbin/create-gns3-container.sh}"
 
 if [ -z "${SERVER_ENDPOINT}" ]; then
   echo "ERROR: WG_SERVER_ENDPOINT missing from ${WIREGUARD_ENV_FILE}" >&2
@@ -100,7 +103,9 @@ trim() {
 
 sanitize_name() {
   local email="$1"
-  printf '%s' "${email}" | tr '[:upper:]' '[:lower:]' | sed 's/@/_at_/g; s/[^a-z0-9._-]/_/g'
+  printf '%s' "${email}" \
+    | tr '[:upper:]' '[:lower:]' \
+    | sed 's/@/-/g; s/\./-/g; s/[^a-z0-9-]/-/g; s/--*/-/g; s/^-//; s/-$//'
 }
 
 peer_exists() {
@@ -111,6 +116,21 @@ peer_exists() {
 email_block_exists() {
   local email="$1"
   grep -Fq "# user: ${email}" "${WG_CONF}"
+}
+
+get_ip_for_email_block() {
+  local email="$1"
+  awk -v email="${email}" '
+    $0 == "# user: " email { in_block=1; next }
+    in_block && /^AllowedIPs = / {
+      sub(/^AllowedIPs = /, "", $0)
+      sub(/\/32$/, "", $0)
+      print
+      exit
+    }
+    in_block && /^#/ { in_block=0 }
+    in_block && /^\[Peer\]/ { next }
+  ' "${WG_CONF}"
 }
 
 next_free_ip() {
@@ -131,7 +151,7 @@ next_free_ip() {
     fi
   done
 
-  echo "ERROR: No free IPs left in ${WG_SUBNET}" >&2
+  echo "ERROR: No free IPs left in ${WG_NETWORK_BASE}.0/24" >&2
   exit 1
 }
 
@@ -180,20 +200,39 @@ copy_to_share_if_available() {
 
 write_summary_header_if_needed() {
   if [ -n "${SUMMARY_FILE}" ] && [ ! -f "${SUMMARY_FILE}" ]; then
-    echo "email,client_ip,local_conf,share_conf" > "${SUMMARY_FILE}"
+    echo "email,safe_name,client_ip,container_name,local_conf,share_conf" > "${SUMMARY_FILE}"
     chmod 600 "${SUMMARY_FILE}"
   fi
 }
 
 write_summary_line() {
   local email="$1"
-  local client_ip="$2"
-  local local_conf="$3"
-  local share_conf="$4"
+  local safe_name="$2"
+  local client_ip="$3"
+  local container_name="$4"
+  local local_conf="$5"
+  local share_conf="$6"
 
   if [ -n "${SUMMARY_FILE}" ]; then
-    echo "${email},${client_ip},${local_conf},${share_conf}" >> "${SUMMARY_FILE}"
+    echo "${email},${safe_name},${client_ip},${container_name},${local_conf},${share_conf}" >> "${SUMMARY_FILE}"
   fi
+}
+
+ensure_gns3_container() {
+  local container_name="$1"
+  local client_ip="$2"
+
+  if [ ! -x "${CREATE_GNS3_SCRIPT}" ]; then
+    echo "ERROR: Missing or not executable: ${CREATE_GNS3_SCRIPT}" >&2
+    exit 1
+  fi
+
+  if docker ps -a --format '{{.Names}}' | grep -Fxq "${container_name}"; then
+    echo "GNS3 container already exists, skipping: ${container_name}" | tee -a "${TMP_REPORT}"
+    return 0
+  fi
+
+  bash "${CREATE_GNS3_SCRIPT}" "${container_name}" "${client_ip}"
 }
 
 write_summary_header_if_needed
@@ -219,6 +258,8 @@ while IFS= read -r raw_line || [ -n "${raw_line}" ]; do
   fi
 
   safe_name="$(sanitize_name "${email}")"
+  container_name="gns3-${safe_name}"
+
   private_key_file="${LOCAL_CLIENT_DIR}/${safe_name}.key"
   public_key_file="${LOCAL_CLIENT_DIR}/${safe_name}.pub"
   local_conf_file="${LOCAL_CLIENT_DIR}/${safe_name}.conf"
@@ -228,7 +269,23 @@ while IFS= read -r raw_line || [ -n "${raw_line}" ]; do
   fi
 
   if email_block_exists "${email}"; then
-    echo "User already exists in wg0.conf, skipping: ${email}" | tee -a "${TMP_REPORT}"
+    client_ip="$(get_ip_for_email_block "${email}")"
+
+    if [ -z "${client_ip}" ]; then
+      echo "ERROR: User exists in wg0.conf but IP could not be read: ${email}" | tee -a "${TMP_REPORT}"
+      continue
+    fi
+
+    create_client_config "$(cat "${private_key_file}" 2>/dev/null || true)" "${client_ip}" "${local_conf_file}" 2>/dev/null || true
+
+    if [ -n "${share_conf_file}" ] && [ -f "${local_conf_file}" ]; then
+      copy_to_share_if_available "${local_conf_file}" "${share_conf_file}"
+    fi
+
+    ensure_gns3_container "${container_name}" "${client_ip}"
+
+    write_summary_line "${email}" "${safe_name}" "${client_ip}" "${container_name}" "${local_conf_file}" "${share_conf_file}"
+    echo "User already exists in wg0.conf, ensured container: ${email} -> ${client_ip} -> ${container_name}" | tee -a "${TMP_REPORT}"
     continue
   fi
 
@@ -257,9 +314,11 @@ while IFS= read -r raw_line || [ -n "${raw_line}" ]; do
     copy_to_share_if_available "${local_conf_file}" "${share_conf_file}"
   fi
 
-  write_summary_line "${email}" "${client_ip}" "${local_conf_file}" "${share_conf_file}"
+  ensure_gns3_container "${container_name}" "${client_ip}"
 
-  echo "Added ${email} -> ${client_ip} -> ${local_conf_file}${share_conf_file:+ -> ${share_conf_file}}" | tee -a "${TMP_REPORT}"
+  write_summary_line "${email}" "${safe_name}" "${client_ip}" "${container_name}" "${local_conf_file}" "${share_conf_file}"
+
+  echo "Added ${email} -> ${client_ip} -> ${container_name} -> ${local_conf_file}${share_conf_file:+ -> ${share_conf_file}}" | tee -a "${TMP_REPORT}"
 done < "${CSV_FILE}"
 
 chmod 600 "${WG_CONF}"
