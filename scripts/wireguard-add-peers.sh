@@ -44,11 +44,19 @@ SERVER_ENDPOINT="${WG_SERVER_ENDPOINT:-}"
 
 REPO_DIR="${REPO_DIR:-/home/ubuntu/gns3-virtual-network-lab}"
 CREATE_GNS3_SCRIPT="${CREATE_GNS3_SCRIPT:-/usr/local/sbin/create-gns3-container.sh}"
+ADMIN_EMAIL="${ADMIN_EMAIL:-}"
 
 if [ -z "${SERVER_ENDPOINT}" ]; then
   echo "ERROR: WG_SERVER_ENDPOINT missing from ${WIREGUARD_ENV_FILE}" >&2
   exit 1
 fi
+
+if [ -z "${ADMIN_EMAIL}" ]; then
+  echo "ERROR: ADMIN_EMAIL missing from ${WIREGUARD_ENV_FILE}" >&2
+  exit 1
+fi
+
+ADMIN_EMAIL="$(printf '%s' "${ADMIN_EMAIL}" | tr '[:upper:]' '[:lower:]' | xargs)"
 
 DEFAULT_CSV_FILE="${SHARE_INPUT_DIR}/users.csv"
 
@@ -200,27 +208,29 @@ copy_to_share_if_available() {
 
 write_summary_header_if_needed() {
   if [ -n "${SUMMARY_FILE}" ] && [ ! -f "${SUMMARY_FILE}" ]; then
-    echo "email,safe_name,client_ip,container_name,local_conf,share_conf" > "${SUMMARY_FILE}"
+    echo "email,role,safe_name,client_ip,container_name,local_conf,share_conf" > "${SUMMARY_FILE}"
     chmod 600 "${SUMMARY_FILE}"
   fi
 }
 
 write_summary_line() {
   local email="$1"
-  local safe_name="$2"
-  local client_ip="$3"
-  local container_name="$4"
-  local local_conf="$5"
-  local share_conf="$6"
+  local role="$2"
+  local safe_name="$3"
+  local client_ip="$4"
+  local container_name="$5"
+  local local_conf="$6"
+  local share_conf="$7"
 
   if [ -n "${SUMMARY_FILE}" ]; then
-    echo "${email},${safe_name},${client_ip},${container_name},${local_conf},${share_conf}" >> "${SUMMARY_FILE}"
+    echo "${email},${role},${safe_name},${client_ip},${container_name},${local_conf},${share_conf}" >> "${SUMMARY_FILE}"
   fi
 }
 
 ensure_gns3_container() {
   local container_name="$1"
   local client_ip="$2"
+  local role="$3"
 
   if [ ! -x "${CREATE_GNS3_SCRIPT}" ]; then
     echo "ERROR: Missing or not executable: ${CREATE_GNS3_SCRIPT}" >&2
@@ -232,7 +242,7 @@ ensure_gns3_container() {
     return 0
   fi
 
-  bash "${CREATE_GNS3_SCRIPT}" "${container_name}" "${client_ip}"
+  bash "${CREATE_GNS3_SCRIPT}" "${container_name}" "${client_ip}" "${role}"
 }
 
 write_summary_header_if_needed
@@ -257,6 +267,11 @@ while IFS= read -r raw_line || [ -n "${raw_line}" ]; do
     continue
   fi
 
+  role="student"
+  if [ "${email}" = "${ADMIN_EMAIL}" ]; then
+    role="teacher"
+  fi
+
   safe_name="$(sanitize_name "${email}")"
   container_name="gns3-${safe_name}"
 
@@ -276,16 +291,21 @@ while IFS= read -r raw_line || [ -n "${raw_line}" ]; do
       continue
     fi
 
-    create_client_config "$(cat "${private_key_file}" 2>/dev/null || true)" "${client_ip}" "${local_conf_file}" 2>/dev/null || true
+    if [ -f "${private_key_file}" ]; then
+      client_private_key="$(cat "${private_key_file}")"
+      create_client_config "${client_private_key}" "${client_ip}" "${local_conf_file}"
 
-    if [ -n "${share_conf_file}" ] && [ -f "${local_conf_file}" ]; then
-      copy_to_share_if_available "${local_conf_file}" "${share_conf_file}"
+      if [ -n "${share_conf_file}" ]; then
+        copy_to_share_if_available "${local_conf_file}" "${share_conf_file}"
+      fi
+    else
+      echo "WARNING: Private key file missing, config not regenerated for ${email}" | tee -a "${TMP_REPORT}"
     fi
 
-    ensure_gns3_container "${container_name}" "${client_ip}"
+    ensure_gns3_container "${container_name}" "${client_ip}" "${role}"
 
-    write_summary_line "${email}" "${safe_name}" "${client_ip}" "${container_name}" "${local_conf_file}" "${share_conf_file}"
-    echo "User already exists in wg0.conf, ensured container: ${email} -> ${client_ip} -> ${container_name}" | tee -a "${TMP_REPORT}"
+    write_summary_line "${email}" "${role}" "${safe_name}" "${client_ip}" "${container_name}" "${local_conf_file}" "${share_conf_file}"
+    echo "User already exists in wg0.conf, ensured container: ${email} (${role}) -> ${client_ip} -> ${container_name}" | tee -a "${TMP_REPORT}"
     continue
   fi
 
@@ -314,11 +334,11 @@ while IFS= read -r raw_line || [ -n "${raw_line}" ]; do
     copy_to_share_if_available "${local_conf_file}" "${share_conf_file}"
   fi
 
-  ensure_gns3_container "${container_name}" "${client_ip}"
+  ensure_gns3_container "${container_name}" "${client_ip}" "${role}"
 
-  write_summary_line "${email}" "${safe_name}" "${client_ip}" "${container_name}" "${local_conf_file}" "${share_conf_file}"
+  write_summary_line "${email}" "${role}" "${safe_name}" "${client_ip}" "${container_name}" "${local_conf_file}" "${share_conf_file}"
 
-  echo "Added ${email} -> ${client_ip} -> ${container_name} -> ${local_conf_file}${share_conf_file:+ -> ${share_conf_file}}" | tee -a "${TMP_REPORT}"
+  echo "Added ${email} (${role}) -> ${client_ip} -> ${container_name} -> ${local_conf_file}${share_conf_file:+ -> ${share_conf_file}}" | tee -a "${TMP_REPORT}"
 done < "${CSV_FILE}"
 
 chmod 600 "${WG_CONF}"
