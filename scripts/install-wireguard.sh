@@ -11,6 +11,7 @@ FILE_SHARE_NAME="${6:-wireguard}"
 STORAGE_ACCOUNT_KEY="${7:-}"
 PUBLIC_ENDPOINT="${8:-}"
 ADMIN_EMAIL="${9:-}"
+ADMIN_USERNAME="${10:-}"
 
 if ! printf '%s' "${WG_SUBNET}" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+\.0/24$'; then
   echo "ERROR: WG_SUBNET must be in x.x.x.0/24 format, got: ${WG_SUBNET}" >&2
@@ -21,6 +22,8 @@ WG_ADDR="${WG_SUBNET%0/24}1/24"
 WG_NET_CIDR="${WG_SUBNET}"
 WG_NETWORK_BASE="${WG_SUBNET%.*/*}"
 WIREGUARD_ENV_FILE="/etc/wireguard/wireguard.env"
+REPO_DIR="/home/${ADMIN_USERNAME}/gns3-virtual-network-lab"
+GNS3_DOCKER_DIR="${REPO_DIR}/docker/gns3"
 
 export DEBIAN_FRONTEND=noninteractive
 
@@ -48,6 +51,10 @@ WG_ADDR=${WG_ADDR}
 WG_NETWORK_BASE=${WG_NETWORK_BASE}
 WG_SERVER_ENDPOINT=${PUBLIC_ENDPOINT}
 ADMIN_EMAIL=${ADMIN_EMAIL}
+ADMIN_USERNAME=${ADMIN_USERNAME}
+REPO_DIR=${REPO_DIR}
+GNS3_DOCKER_DIR=${GNS3_DOCKER_DIR}
+CREATE_GNS3_SCRIPT=/usr/local/sbin/create-gns3-container.sh
 VNET_PREFIX=${VNET_PREFIX}
 WG_PORT=${WG_PORT}
 SERVER_PUBLIC_KEY_FILE=/etc/wireguard/server_public.key

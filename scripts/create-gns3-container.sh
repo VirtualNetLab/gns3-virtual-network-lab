@@ -19,6 +19,18 @@ if [ -z "${CONTAINER_NAME}" ] || [ -z "${WG_IP}" ]; then
   exit 1
 fi
 
+WIREGUARD_ENV_FILE="/etc/wireguard/wireguard.env"
+if [ -f "${WIREGUARD_ENV_FILE}" ]; then
+  # shellcheck disable=SC1091
+  source "${WIREGUARD_ENV_FILE}"
+fi
+
+REPO_DIR="${REPO_DIR:-/home/azureuser/gns3-virtual-network-lab}"
+GNS3_DOCKER_DIR="${GNS3_DOCKER_DIR:-${REPO_DIR}/docker/gns3}"
+
+HOST_INIT_TAP="${HOST_INIT_TAP:-${GNS3_DOCKER_DIR}/init-tap.sh}"
+HOST_START_GNS3="${HOST_START_GNS3:-${GNS3_DOCKER_DIR}/start-gns3.sh}"
+
 # --- settings ---
 NETWORK_NAME="${NETWORK_NAME:-labnet}"
 GNS3_SUBNET_BASE="${GNS3_SUBNET_BASE:-172.30.0}"
@@ -29,15 +41,6 @@ PGID_VALUE="${PGID_VALUE:-1000}"
 HOST_KVM="${HOST_KVM:-/dev/kvm}"
 HOST_TUN="${HOST_TUN:-/dev/net/tun}"
 # ----------------
-
-# Resolve repository root from script location
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
-
-# Docker/GNS3 host paths inside repo
-GNS3_DOCKER_DIR="${REPO_ROOT}/docker/gns3"
-HOST_INIT_TAP="${GNS3_DOCKER_DIR}/init-tap.sh"
-HOST_START_GNS3="${GNS3_DOCKER_DIR}/start-gns3.sh"
 
 # Per-container persistent directories
 HOST_CONF_DIR="${GNS3_DOCKER_DIR}/instances/${CONTAINER_NAME}/conf"
