@@ -388,7 +388,7 @@
         "autoUpgradeMinorVersion": true,
         "settings": {
           "fileUris": "[parameters('customScriptFileUris')]",
-          "commandToExecute": "[concat('bash install-wireguard.sh ', parameters('wireGuardSubnet'), ' ', parameters('labnet'), ' ', string(parameters('wireGuardListenPort')), ' ', parameters('scriptBaseUrl'), ' ', variables('storageAccountName'), ' ', parameters('fileShareName'), ' ', listKeys(resourceId('Microsoft.Storage/storageAccounts', variables('storageAccountName')), '2023-01-01').keys[0].value, ' ', reference(resourceId('Microsoft.Network/publicIpAddresses', variables('pipName'))).ipAddress, ' ', parameters('adminEmail'), ' && bash install-docker.sh ', parameters('adminUsername'), ' && bash init-server.sh ', parameters('adminUsername'))]"
+          "commandToExecute": "[concat('bash install-wireguard.sh ', parameters('wireGuardSubnet'), ' ', parameters('labnet'), ' ', string(parameters('wireGuardListenPort')), ' ', parameters('scriptBaseUrl'), ' ', variables('storageAccountName'), ' ', parameters('fileShareName'), ' ', listKeys(resourceId('Microsoft.Storage/storageAccounts', variables('storageAccountName')), '2023-01-01').keys[0].value, ' ', reference(resourceId('Microsoft.Network/publicIpAddresses', variables('pipName'))).ipAddress, ' ', parameters('adminEmail'), ' ', parameters('adminUsername'), ' && bash install-docker.sh ', parameters('adminUsername'), ' && bash init-server.sh ', parameters('adminUsername'))]"
         }
       }
     },

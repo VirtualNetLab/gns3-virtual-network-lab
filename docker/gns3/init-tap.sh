@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# --- asetukset (samat kuin sulla) ---
 TAP_IF="tap0"
 BR_IF="virbr0"
 
@@ -12,20 +11,17 @@ DHCP_LEASE="12h"
 DNS1="1.1.1.1"
 DNS2="8.8.8.8"
 UPLINK_IF="eth0"
-# ------------------------------------
 
-# /dev/net/tun
+# /dev/net/tun tarkistus
 if [ ! -e /dev/net/tun ]; then
   echo "ERROR: /dev/net/tun not present. Did you pass devices: /dev/net/tun ?" >&2
   exit 1
 fi
 
-# tap0 olemassa?
 if ! ip link show "${TAP_IF}" >/dev/null 2>&1; then
   ip tuntap add dev "${TAP_IF}" mode tap
 fi
 
-# bridge virbr0 olemassa?
 if ! ip link show "${BR_IF}" >/dev/null 2>&1; then
   ip link add name "${BR_IF}" type bridge
 fi
@@ -35,13 +31,11 @@ ip -4 addr flush dev "${TAP_IF}" || true
 ip -4 addr flush dev "${BR_IF}" || true
 
 # liitä tap0 siltaan (virbr0)
-# (jos oli jo masterissa, tämä ei haittaa)
 ip link set "${TAP_IF}" master "${BR_IF}"
 
 # IP sillalle
 ip addr add "${BR_IP}" dev "${BR_IF}"
 
-# ylös
 ip link set "${TAP_IF}" up
 ip link set "${BR_IF}" up
 
